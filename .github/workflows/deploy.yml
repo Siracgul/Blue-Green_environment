@@ -58,6 +58,7 @@ jobs:
             set -e
             cd /home/ubuntu/bluegreen-app
             ls -l
+            sudo docker compose down
             sudo docker compose up -d --build blue
 
       ########################
@@ -93,6 +94,7 @@ jobs:
             set -e
             cd /home/ubuntu/bluegreen-app
             ls -l
+            sudo docker compose down
             sudo docker compose up -d --build green
 
       ########################
