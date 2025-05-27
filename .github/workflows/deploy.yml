@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  GREEN_PORT: 8082  # default port for Green app; override via repository secret if needed
+  GREEN_PORT: 8082  # default port for Green app
 
 jobs:
   deploy:
@@ -19,7 +19,7 @@ jobs:
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'nginx:alpine'  # or a real image
+          image-ref: 'nginx:alpine'
           format: 'table'
           severity: 'CRITICAL'
           exit-code: '0'
@@ -48,7 +48,6 @@ jobs:
             cd /home/ubuntu/bluegreen-app
             sudo docker compose up -d --build blue
 
-
       ########################
       # DEPLOY TO GREEN SERVER
       ########################
@@ -72,7 +71,6 @@ jobs:
             cd /home/ubuntu/bluegreen-app
             sudo docker compose up -d --build green
 
-
       ########################
       # HEALTH CHECK ON GREEN
       ########################
@@ -89,48 +87,28 @@ jobs:
             curl --fail http://localhost:${{ env.GREEN_PORT }} || exit 1
 
       ########################
-      # ENSURE NGINX ON PROXY
+      # ENSURE NGINX ON PROXY (uses bluegreen.conf with failover logic)
       ########################
-      - name: Ensure Nginx is installed on Proxy
+      - name: Ensure Nginx is installed and bluegreen.conf is enabled on Proxy
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.PROXY_IP }}
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
+            echo "📦 Installing Nginx if not present..."
             sudo apt update
             sudo apt install -y nginx
             sudo systemctl enable nginx
             sudo systemctl start nginx
 
-      ########################
-      # ROLLBACK TO BLUE IF HEALTH CHECK FAILS
-      ########################
-      - name: Rollback to Blue if health check fails
-        if: steps.health.outcome == 'failure'
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.PROXY_IP }}
-          username: ubuntu
-          key: ${{ secrets.EC2_KEY }}
-          script: |
-            echo "❌ Health check failed. Switching Proxy to BLUE"
-            sudo ln -sf /etc/nginx/sites-available/blue.conf /etc/nginx/sites-enabled/current
-            sudo systemctl reload nginx
+            echo "🔗 Linking bluegreen.conf to sites-enabled/current..."
+            sudo ln -sf /etc/nginx/sites-available/bluegreen.conf /etc/nginx/sites-enabled/current
 
-      ########################
-      # SWITCH TRAFFIC TO GREEN IF HEALTH CHECK PASSES
-      ########################
-      - name: Switch traffic to Green if health check passes
-        if: steps.health.outcome == 'success'
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.PROXY_IP }}
-          username: ubuntu
-          key: ${{ secrets.EC2_KEY }}
-          script: |
-            echo "✅ Green passed. Switching Proxy to GREEN"
-            sudo ln -sf /etc/nginx/sites-available/green.conf /etc/nginx/sites-enabled/current
+            echo "🧪 Testing Nginx configuration..."
+            sudo nginx -t
+
+            echo "🔄 Reloading Nginx with failover config..."
             sudo systemctl reload nginx
 
       ########################
@@ -139,7 +117,7 @@ jobs:
       - name: Print Deployment Result
         run: |
           if [ "${{ steps.health.outcome }}" == "success" ]; then
-            echo "✅ Green deployed and switched successfully."
+            echo "✅ Green deployed successfully. Proxy configured with failover."
           else
-            echo "❌ Green deployment failed. Rolled back to Blue."
+            echo "⚠️ Green deployment failed. Proxy still serves Blue via fallback."
           fi
