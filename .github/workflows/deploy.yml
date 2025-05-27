@@ -1,0 +1,143 @@
+name: Blue-Green Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GREEN_PORT: 8082  # default port for Green app; override via repository secret if needed
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'nginx:alpine'  # or a real image
+          format: 'table'
+          severity: 'CRITICAL'
+          exit-code: '0'
+          ignore-unfixed: true
+
+      ########################
+      # DEPLOY TO BLUE SERVER
+      ########################
+      - name: Upload code to Blue EC2
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.BLUE_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          source: "."
+          target: "/home/ubuntu/bluegreen-app"
+
+      - name: Deploy blue_app on Blue EC2
+        id: deploy_blue
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.BLUE_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            cd /home/ubuntu/bluegreen-app
+            sudo docker compose -f docker-compose-blue.yml up -d --build blue_app
+
+      ########################
+      # DEPLOY TO GREEN SERVER
+      ########################
+      - name: Upload code to Green EC2
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.GREEN_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          source: "."
+          target: "/home/ubuntu/bluegreen-app"
+
+      - name: Deploy green_app on Green EC2
+        id: deploy_green
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.GREEN_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            cd /home/ubuntu/bluegreen-app
+            sudo docker compose -f docker-compose-green.yml up -d --build green_app
+
+      ########################
+      # HEALTH CHECK ON GREEN
+      ########################
+      - name: Health Check on Green (via SSH)
+        id: health
+        continue-on-error: true
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.GREEN_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            echo "Performing health check on Green app..."
+            curl --fail http://localhost:${{ env.GREEN_PORT }} || exit 1
+
+      ########################
+      # ENSURE NGINX ON PROXY
+      ########################
+      - name: Ensure Nginx is installed on Proxy
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.PROXY_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            sudo apt update
+            sudo apt install -y nginx
+            sudo systemctl enable nginx
+            sudo systemctl start nginx
+
+      ########################
+      # ROLLBACK TO BLUE IF HEALTH CHECK FAILS
+      ########################
+      - name: Rollback to Blue if health check fails
+        if: steps.health.outcome == 'failure'
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.PROXY_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            echo "❌ Health check failed. Switching Proxy to BLUE"
+            sudo ln -sf /etc/nginx/sites-available/blue.conf /etc/nginx/sites-enabled/current
+            sudo systemctl reload nginx
+
+      ########################
+      # SWITCH TRAFFIC TO GREEN IF HEALTH CHECK PASSES
+      ########################
+      - name: Switch traffic to Green if health check passes
+        if: steps.health.outcome == 'success'
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.PROXY_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            echo "✅ Green passed. Switching Proxy to GREEN"
+            sudo ln -sf /etc/nginx/sites-available/green.conf /etc/nginx/sites-enabled/current
+            sudo systemctl reload nginx
+
+      ########################
+      # DEPLOYMENT RESULT
+      ########################
+      - name: Print Deployment Result
+        run: |
+          if [ "${{ steps.health.outcome }}" == "success" ]; then
+            echo "✅ Green deployed and switched successfully."
+          else
+            echo "❌ Green deployment failed. Rolled back to Blue."
+          fi
