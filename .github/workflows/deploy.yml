@@ -46,7 +46,8 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           script: |
             cd /home/ubuntu/bluegreen-app
-            sudo docker compose -f docker-compose-blue.yml up -d --build blue_app
+            sudo docker compose up -d --build blue
+
 
       ########################
       # DEPLOY TO GREEN SERVER
@@ -69,7 +70,8 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           script: |
             cd /home/ubuntu/bluegreen-app
-            sudo docker compose -f docker-compose-green.yml up -d --build green_app
+            sudo docker compose up -d --build green
+
 
       ########################
       # HEALTH CHECK ON GREEN
