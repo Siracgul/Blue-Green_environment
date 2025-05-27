@@ -28,6 +28,16 @@ jobs:
       ########################
       # DEPLOY TO BLUE SERVER
       ########################
+      - name: Ensure bluegreen-app folder exists on Blue EC2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.BLUE_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            mkdir -p /home/ubuntu/bluegreen-app
+            ls -l /home/ubuntu/bluegreen-app || true
+
       - name: Upload code to Blue EC2
         uses: appleboy/scp-action@v0.1.4
         with:
@@ -45,12 +55,24 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
+            set -e
             cd /home/ubuntu/bluegreen-app
+            ls -l
             sudo docker compose up -d --build blue
 
       ########################
       # DEPLOY TO GREEN SERVER
       ########################
+      - name: Ensure bluegreen-app folder exists on Green EC2
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.GREEN_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            mkdir -p /home/ubuntu/bluegreen-app
+            ls -l /home/ubuntu/bluegreen-app || true
+
       - name: Upload code to Green EC2
         uses: appleboy/scp-action@v0.1.4
         with:
@@ -68,7 +90,9 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
+            set -e
             cd /home/ubuntu/bluegreen-app
+            ls -l
             sudo docker compose up -d --build green
 
       ########################
@@ -96,6 +120,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}
           script: |
+            set -e
             echo "📦 Installing Nginx if not present..."
             sudo apt update
             sudo apt install -y nginx
